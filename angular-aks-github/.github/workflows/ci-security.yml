@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - develop
 
 permissions:
   contents: read
@@ -46,16 +45,14 @@ jobs:
           severity: 'HIGH,CRITICAL'
 
       - name: SonarQube scan
-        if: ${{ vars.SONAR_ENABLED == 'true' }}
         uses: SonarSource/sonarqube-scan-action@v7.0.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       - name: SonarQube quality gate
-        if: ${{ vars.SONAR_ENABLED == 'true' }}
         uses: SonarSource/sonarqube-quality-gate-action@v4.0.0
         timeout-minutes: 10
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
