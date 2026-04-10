@@ -3,67 +3,46 @@ name: Deploy Angular to AKS
 on:
   workflow_dispatch:
     inputs:
-      environment_name:
-        description: GitHub environment name
+      image_tag:
+        description: Docker image tag
         required: true
-        default: delphi
-        type: string
-      auth_mode:
-        description: Azure authentication mode
-        required: true
-        default: spn-secret
-        type: choice
-        options:
-          - spn-secret
-          - oidc
-      namespace:
-        description: Kubernetes namespace
-        required: true
-        default: angular-delphi
-        type: string
-      helm_release_name:
-        description: Helm release name
-        required: true
-        default: angular-delphi
+        default: v1
         type: string
       replica_count:
         description: Number of pods
         required: true
         default: '2'
         type: string
-      image_tag:
-        description: Leave blank to use commit SHA
-        required: false
-        default: ''
-        type: string
 
 permissions:
   id-token: write
   contents: read
 
-concurrency:
-  group: deploy-${{ github.ref }}-${{ inputs.environment_name }}
-  cancel-in-progress: false
-
 jobs:
   build-scan-deploy:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment_name }}
-    env:
-      IMAGE_NAME: ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_REPOSITORY }}
+    environment: dev
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Resolve image tag
+      - name: Read config from AZURE_CREDENTIALS
+        shell: bash
         run: |
-          if [ -n "${{ inputs.image_tag }}" ]; then
-            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> $GITHUB_ENV
-          else
-            echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
-          fi
+          echo '${{ secrets.AZURE_CREDENTIALS }}' > azure-config.json
+          echo "AZURE_CLIENT_ID=$(jq -r '.clientId' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_TENANT_ID=$(jq -r '.tenantId' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_SUBSCRIPTION_ID=$(jq -r '.subscriptionId' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_RESOURCE_GROUP=$(jq -r '.resourceGroup' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_AKS_CLUSTER_NAME=$(jq -r '.aksClusterName' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_AKS_NAMESPACE=$(jq -r '.aksNamespace' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_ACR_NAME=$(jq -r '.acrName' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_ACR_LOGIN_SERVER=$(jq -r '.acrLoginServer' azure-config.json)" >> $GITHUB_ENV
+          echo "HELM_RELEASE_NAME=$(jq -r '.helmReleaseName' azure-config.json)" >> $GITHUB_ENV
+          echo "IMAGE_NAME=$(jq -r '.imageName' azure-config.json)" >> $GITHUB_ENV
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -84,91 +63,77 @@ jobs:
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@0.35.0
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'table'
+          scan-type: fs
+          scan-ref: .
+          format: table
           exit-code: '1'
           ignore-unfixed: true
-          severity: 'HIGH,CRITICAL'
+          severity: HIGH,CRITICAL
 
       - name: SonarQube scan
-        if: ${{ vars.SONAR_ENABLED == 'true' }}
         uses: SonarSource/sonarqube-scan-action@v7.0.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       - name: SonarQube quality gate
-        if: ${{ vars.SONAR_ENABLED == 'true' }}
         uses: SonarSource/sonarqube-quality-gate-action@v4.0.0
         timeout-minutes: 10
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       - name: Azure login using OIDC
-        if: ${{ inputs.auth_mode == 'oidc' }}
-        uses: azure/login@v3
+        uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Azure login using Service Principal secret
-        if: ${{ inputs.auth_mode == 'spn-secret' }}
-        uses: azure/login@v3
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Verify Azure account
         run: az account show
 
       - name: Login to Azure Container Registry
-        run: az acr login --name ${{ vars.ACR_NAME }}
+        run: az acr login --name $AZURE_ACR_NAME
 
       - name: Build Docker image
-        run: docker build -t $IMAGE_NAME:$IMAGE_TAG .
+        run: docker build -t $AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }} .
 
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@0.35.0
         with:
-          image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          format: 'table'
+          image-ref: ${{ env.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+          format: table
           exit-code: '1'
           ignore-unfixed: true
-          severity: 'HIGH,CRITICAL'
+          severity: HIGH,CRITICAL
 
       - name: Push Docker image
-        run: docker push $IMAGE_NAME:$IMAGE_TAG
+        run: docker push $AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
-        with:
-          version: 'latest'
 
       - name: Install Helm
-        uses: azure/setup-helm@v5.0.0
-        with:
-          version: 'latest'
+        uses: azure/setup-helm@v4
 
       - name: Set AKS context
-        uses: azure/aks-set-context@v5
+        uses: azure/aks-set-context@v4
         with:
-          resource-group: ${{ vars.AKS_RESOURCE_GROUP }}
-          cluster-name: ${{ vars.AKS_CLUSTER_NAME }}
-          admin: 'true'
+          resource-group: ${{ env.AZURE_RESOURCE_GROUP }}
+          cluster-name: ${{ env.AZURE_AKS_CLUSTER_NAME }}
 
       - name: Deploy using Helm
         run: |
-          helm upgrade --install ${{ inputs.helm_release_name }} ${{ vars.HELM_CHART_PATH }} \
-            --namespace ${{ inputs.namespace }} \
+          helm upgrade --install $HELM_RELEASE_NAME ./helm/angular-aks \
+            --namespace $AZURE_AKS_NAMESPACE \
             --create-namespace \
             -f ./helm/angular-aks/values-delphi.yaml \
-            --set image.repository=$IMAGE_NAME \
-            --set image.tag=$IMAGE_TAG \
+            --set image.repository=$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME \
+            --set image.tag=${{ inputs.image_tag }} \
             --set replicaCount=${{ inputs.replica_count }}
 
       - name: Verify deployment
         run: |
-          kubectl get pods -n ${{ inputs.namespace }}
-          kubectl get svc -n ${{ inputs.namespace }}
+          kubectl get pods -n $AZURE_AKS_NAMESPACE
+          kubectl get svc -n $AZURE_AKS_NAMESPACE
