@@ -1,7 +1,7 @@
 replicaCount: 2
 
 image:
-  repository: acrdelphiaksdemo001.azurecr.io/angular-aks-app
+  repository: reactapp.azurecr.io/angular-aks-app
   tag: latest
   pullPolicy: IfNotPresent
 
