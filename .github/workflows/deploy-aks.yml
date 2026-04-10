@@ -113,7 +113,7 @@ jobs:
         run: az acr login --name $AZURE_ACR_NAME
 
       - name: Build Docker image
-        run: docker build -t $AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }} .
+        run: docker build --platform linux/amd64 -t $AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }} .
 
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@0.35.0
