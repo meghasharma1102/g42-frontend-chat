@@ -1,139 +1,139 @@
-# name: Deploy Angular to AKS
+name: Deploy Angular to AKS
 
-# on:
-#   workflow_dispatch:
-#     inputs:
-#       image_tag:
-#         description: Docker image tag
-#         required: true
-#         default: v1
-#         type: string
-#       replica_count:
-#         description: Number of pods
-#         required: true
-#         default: '2'
-#         type: string
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Docker image tag
+        required: true
+        default: v1
+        type: string
+      replica_count:
+        description: Number of pods
+        required: true
+        default: '2'
+        type: string
 
-# permissions:
-#   id-token: write
-#   contents: read
+permissions:
+  id-token: write
+  contents: read
 
-# jobs:
-#   build-scan-deploy:
-#     runs-on: [self-hosted, Linux, X64]
-#     environment: dev
+jobs:
+  build-scan-deploy:
+    runs-on: [self-hosted, Linux, X64]
+    environment: dev
 
-#     steps:
-#       - name: Checkout
-#         uses: actions/checkout@v4
-#         with:
-#           fetch-depth: 0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-#       - name: Read config from AZURE_CREDENTIALS
-#         shell: bash
-#         run: |
-#           echo '${{ secrets.AZURE_CREDENTIALS }}' > azure-config.json
-#           echo "AZURE_CLIENT_ID=$(jq -r '.clientId' azure-config.json)" >> $GITHUB_ENV
-#           echo "AZURE_TENANT_ID=$(jq -r '.tenantId' azure-config.json)" >> $GITHUB_ENV
-#           echo "AZURE_SUBSCRIPTION_ID=$(jq -r '.subscriptionId' azure-config.json)" >> $GITHUB_ENV
-#           echo "AZURE_RESOURCE_GROUP=$(jq -r '.resourceGroup' azure-config.json)" >> $GITHUB_ENV
-#           echo "AZURE_AKS_CLUSTER_NAME=$(jq -r '.aksClusterName' azure-config.json)" >> $GITHUB_ENV
-#           echo "AZURE_AKS_NAMESPACE=$(jq -r '.aksNamespace' azure-config.json)" >> $GITHUB_ENV
-#           echo "AZURE_ACR_NAME=$(jq -r '.acrName' azure-config.json)" >> $GITHUB_ENV
-#           echo "AZURE_ACR_LOGIN_SERVER=$(jq -r '.acrLoginServer' azure-config.json)" >> $GITHUB_ENV
-#           echo "HELM_RELEASE_NAME=$(jq -r '.helmReleaseName' azure-config.json)" >> $GITHUB_ENV
-#           echo "IMAGE_NAME=$(jq -r '.imageName' azure-config.json)" >> $GITHUB_ENV
+      - name: Read config from AZURE_CREDENTIALS
+        shell: bash
+        run: |
+          echo '${{ secrets.AZURE_CREDENTIALS }}' > azure-config.json
+          echo "AZURE_CLIENT_ID=$(jq -r '.clientId' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_TENANT_ID=$(jq -r '.tenantId' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_SUBSCRIPTION_ID=$(jq -r '.subscriptionId' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_RESOURCE_GROUP=$(jq -r '.resourceGroup' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_AKS_CLUSTER_NAME=$(jq -r '.aksClusterName' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_AKS_NAMESPACE=$(jq -r '.aksNamespace' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_ACR_NAME=$(jq -r '.acrName' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_ACR_LOGIN_SERVER=$(jq -r '.acrLoginServer' azure-config.json)" >> $GITHUB_ENV
+          echo "HELM_RELEASE_NAME=$(jq -r '.helmReleaseName' azure-config.json)" >> $GITHUB_ENV
+          echo "IMAGE_NAME=$(jq -r '.imageName' azure-config.json)" >> $GITHUB_ENV
 
-#       - name: Setup Node.js
-#         uses: actions/setup-node@v4
-#         with:
-#           node-version: '20'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-#       - name: Install dependencies
-#         run: npm install
+      - name: Install dependencies
+        run: npm install
 
-#       - name: Build Angular app
-#         run: npm run build
+      - name: Build Angular app
+        run: npm run build
 
-#       - name: Gitleaks scan
-#         uses: gitleaks/gitleaks-action@v2
-#         env:
-#           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gitleaks scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-#       - name: Trivy filesystem scan
-#         uses: aquasecurity/trivy-action@0.35.0
-#         with:
-#           scan-type: fs
-#           scan-ref: .
-#           format: table
-#           exit-code: '1'
-#           ignore-unfixed: true
-#           severity: HIGH,CRITICAL
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
 
-#       - name: SonarQube scan
-#         uses: SonarSource/sonarqube-scan-action@v7.0.0
-#         env:
-#           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-#           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      - name: SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v7.0.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-#       - name: SonarQube quality gate
-#         uses: SonarSource/sonarqube-quality-gate-action@v4.0.0
-#         timeout-minutes: 10
-#         env:
-#           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-#           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      - name: SonarQube quality gate
+        uses: SonarSource/sonarqube-quality-gate-action@v4.0.0
+        timeout-minutes: 10
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-#       - name: Azure login using OIDC
-#         uses: azure/login@v2
-#         with:
-#           client-id: ${{ env.AZURE_CLIENT_ID }}
-#           tenant-id: ${{ env.AZURE_TENANT_ID }}
-#           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      - name: Azure login using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-#       - name: Verify Azure account
-#         run: az account show
+      - name: Verify Azure account
+        run: az account show
 
-#       - name: Login to Azure Container Registry
-#         run: az acr login --name $AZURE_ACR_NAME
+      - name: Login to Azure Container Registry
+        run: az acr login --name $AZURE_ACR_NAME
 
-#       - name: Build Docker image
-#         run: docker build -t $AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }} .
+      - name: Build Docker image
+        run: docker build -t $AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }} .
 
-#       - name: Trivy image scan
-#         uses: aquasecurity/trivy-action@0.35.0
-#         with:
-#           image-ref: ${{ env.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
-#           format: table
-#           exit-code: '1'
-#           ignore-unfixed: true
-#           severity: HIGH,CRITICAL
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ${{ env.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
 
-#       - name: Push Docker image
-#         run: docker push $AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}
+      - name: Push Docker image
+        run: docker push $AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}
 
-#       - name: Install kubectl
-#         uses: azure/setup-kubectl@v4
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
 
-#       - name: Install Helm
-#         uses: azure/setup-helm@v4
+      - name: Install Helm
+        uses: azure/setup-helm@v4
 
-#       - name: Set AKS context
-#         uses: azure/aks-set-context@v4
-#         with:
-#           resource-group: ${{ env.AZURE_RESOURCE_GROUP }}
-#           cluster-name: ${{ env.AZURE_AKS_CLUSTER_NAME }}
+      - name: Set AKS context
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ env.AZURE_RESOURCE_GROUP }}
+          cluster-name: ${{ env.AZURE_AKS_CLUSTER_NAME }}
 
-#       - name: Deploy using Helm
-#         run: |
-#           helm upgrade --install $HELM_RELEASE_NAME ./helm/angular-aks \
-#             --namespace $AZURE_AKS_NAMESPACE \
-#             --create-namespace \
-#             -f ./helm/angular-aks/values-delphi.yaml \
-#             --set image.repository=$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME \
-#             --set image.tag=${{ inputs.image_tag }} \
-#             --set replicaCount=${{ inputs.replica_count }}
+      - name: Deploy using Helm
+        run: |
+          helm upgrade --install $HELM_RELEASE_NAME ./helm/angular-aks \
+            --namespace $AZURE_AKS_NAMESPACE \
+            --create-namespace \
+            -f ./helm/angular-aks/values-delphi.yaml \
+            --set image.repository=$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME \
+            --set image.tag=${{ inputs.image_tag }} \
+            --set replicaCount=${{ inputs.replica_count }}
 
-#       - name: Verify deployment
-#         run: |
-#           kubectl get pods -n $AZURE_AKS_NAMESPACE
-#           kubectl get svc -n $AZURE_AKS_NAMESPACE
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n $AZURE_AKS_NAMESPACE
+          kubectl get svc -n $AZURE_AKS_NAMESPACE
