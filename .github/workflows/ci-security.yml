@@ -12,6 +12,10 @@ permissions:
 jobs:
   validate:
     runs-on: [self-hosted, Linux, X64]
+    defaults:
+      run:
+        working-directory: angular-aks-github
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,21 +41,23 @@ jobs:
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@0.35.0
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'table'
+          scan-type: fs
+          scan-ref: ./angular-aks-github
+          format: table
           exit-code: '1'
           ignore-unfixed: true
-          severity: 'HIGH,CRITICAL'
+          severity: HIGH,CRITICAL
 
       - name: SonarQube scan
         uses: SonarSource/sonarqube-scan-action@v7.0.0
+        with:
+          projectBaseDir: angular-aks-github
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       - name: SonarQube quality gate
-        uses: SonarSource/sonarqube-quality-gate-action@v4.0.0
+        uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
         timeout-minutes: 10
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
