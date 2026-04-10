@@ -58,7 +58,13 @@ jobs:
 
       - name: SonarQube quality gate
         uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
+        with:
+          scanMetadataReportFile: angular-aks-github/.scannerwork/report-task.txt
         timeout-minutes: 10
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+
+
+  
