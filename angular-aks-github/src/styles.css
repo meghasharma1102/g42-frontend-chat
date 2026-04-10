@@ -1,0 +1,85 @@
+:root {
+  color-scheme: light;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #f5f7fb, #e8eefc);
+  color: #14213d;
+}
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.card {
+  width: min(980px, 100%);
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(20, 33, 61, 0.12);
+  padding: 32px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #3f72af;
+  font-weight: 700;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 40px;
+  line-height: 1.1;
+}
+
+.lead {
+  margin: 0 0 24px;
+  font-size: 18px;
+  color: #33415c;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.tile {
+  border: 1px solid #dbe3f0;
+  border-radius: 16px;
+  padding: 18px;
+  background: #f9fbff;
+}
+
+.tile h2 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+.tile p,
+.footer-note {
+  margin: 0;
+  color: #33415c;
+  line-height: 1.6;
+}
+
+.footer-note {
+  margin-top: 24px;
+  padding: 16px;
+  border-left: 4px solid #3f72af;
+  background: #f2f7ff;
+  border-radius: 10px;
+}

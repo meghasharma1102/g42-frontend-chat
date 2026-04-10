@@ -1,0 +1,174 @@
+name: Deploy Angular to AKS
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment_name:
+        description: GitHub environment name
+        required: true
+        default: delphi
+        type: string
+      auth_mode:
+        description: Azure authentication mode
+        required: true
+        default: spn-secret
+        type: choice
+        options:
+          - spn-secret
+          - oidc
+      namespace:
+        description: Kubernetes namespace
+        required: true
+        default: angular-delphi
+        type: string
+      helm_release_name:
+        description: Helm release name
+        required: true
+        default: angular-delphi
+        type: string
+      replica_count:
+        description: Number of pods
+        required: true
+        default: '2'
+        type: string
+      image_tag:
+        description: Leave blank to use commit SHA
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}-${{ inputs.environment_name }}
+  cancel-in-progress: false
+
+jobs:
+  build-scan-deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment_name }}
+    env:
+      IMAGE_NAME: ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_REPOSITORY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve image tag
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> $GITHUB_ENV
+          else
+            echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Angular app
+        run: npm run build
+
+      - name: Gitleaks scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'HIGH,CRITICAL'
+
+      - name: SonarQube scan
+        if: ${{ vars.SONAR_ENABLED == 'true' }}
+        uses: SonarSource/sonarqube-scan-action@v7.0.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+
+      - name: SonarQube quality gate
+        if: ${{ vars.SONAR_ENABLED == 'true' }}
+        uses: SonarSource/sonarqube-quality-gate-action@v4.0.0
+        timeout-minutes: 10
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+
+      - name: Azure login using OIDC
+        if: ${{ inputs.auth_mode == 'oidc' }}
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure login using Service Principal secret
+        if: ${{ inputs.auth_mode == 'spn-secret' }}
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Verify Azure account
+        run: az account show
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name ${{ vars.ACR_NAME }}
+
+      - name: Build Docker image
+        run: docker build -t $IMAGE_NAME:$IMAGE_TAG .
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'HIGH,CRITICAL'
+
+      - name: Push Docker image
+        run: docker push $IMAGE_NAME:$IMAGE_TAG
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'latest'
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5.0.0
+        with:
+          version: 'latest'
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v5
+        with:
+          resource-group: ${{ vars.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ vars.AKS_CLUSTER_NAME }}
+          admin: 'true'
+
+      - name: Deploy using Helm
+        run: |
+          helm upgrade --install ${{ inputs.helm_release_name }} ${{ vars.HELM_CHART_PATH }} \
+            --namespace ${{ inputs.namespace }} \
+            --create-namespace \
+            -f ./helm/angular-aks/values-delphi.yaml \
+            --set image.repository=$IMAGE_NAME \
+            --set image.tag=$IMAGE_TAG \
+            --set replicaCount=${{ inputs.replica_count }}
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n ${{ inputs.namespace }}
+          kubectl get svc -n ${{ inputs.namespace }}
