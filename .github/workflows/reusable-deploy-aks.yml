@@ -332,10 +332,10 @@ jobs:
             upgrade --install "$HELM_RELEASE_NAME" "${{ inputs.helm_chart_path }}"
             --namespace "$AZURE_AKS_NAMESPACE"
             --create-namespace
-            --atomic
             --wait
             --timeout 10m
             --history-max 5
+            --debug
             --set "image.repository=$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME"
             --set "image.tag=${{ inputs.image_tag }}"
             --set "replicaCount=${{ inputs.replica_count }}"
@@ -343,7 +343,23 @@ jobs:
           if [ -n "${{ inputs.helm_values_file }}" ]; then
             HELM_ARGS+=( -f "${{ inputs.helm_values_file }}" )
           fi
-          helm "${HELM_ARGS[@]}"
+          if ! helm "${HELM_ARGS[@]}"; then
+            echo "=== Helm status ==="
+            helm status "$HELM_RELEASE_NAME" -n "$AZURE_AKS_NAMESPACE" || true
+            echo "=== Deployments ==="
+            kubectl get deploy -n "$AZURE_AKS_NAMESPACE" -o wide || true
+            echo "=== ReplicaSets ==="
+            kubectl get rs -n "$AZURE_AKS_NAMESPACE" -o wide || true
+            echo "=== Pods ==="
+            kubectl get pods -n "$AZURE_AKS_NAMESPACE" -o wide || true
+            echo "=== Deployment describe ==="
+            kubectl describe deploy "$HELM_RELEASE_NAME" -n "$AZURE_AKS_NAMESPACE" || true
+            echo "=== ReplicaSet describe ==="
+            kubectl describe rs -n "$AZURE_AKS_NAMESPACE" || true
+            echo "=== Recent events ==="
+            kubectl get events -n "$AZURE_AKS_NAMESPACE" --sort-by=.metadata.creationTimestamp || true
+            exit 1
+          fi
 
       - name: Verify rollout and pod readiness
         shell: bash
@@ -401,16 +417,28 @@ jobs:
         shell: bash
         run: |
           set +e
+          echo "=== Helm history ==="
+          helm history "$HELM_RELEASE_NAME" -n "$AZURE_AKS_NAMESPACE"
+          echo "=== Helm status ==="
+          helm status "$HELM_RELEASE_NAME" -n "$AZURE_AKS_NAMESPACE"
           echo "=== Deployments ==="
           kubectl get deploy -n "$AZURE_AKS_NAMESPACE" -o wide
           echo "=== Deployment strategies ==="
           kubectl get deploy -n "$AZURE_AKS_NAMESPACE" \
             -o jsonpath='{range .items[*]}{.metadata.name}{" strategy.type="}{.spec.strategy.type}{" rollingUpdate="}{.spec.strategy.rollingUpdate}{"\n"}{end}'
+          echo "=== ReplicaSets ==="
+          kubectl get rs -n "$AZURE_AKS_NAMESPACE" -o wide
           echo "=== Pods ==="
           kubectl get pods -n "$AZURE_AKS_NAMESPACE" -o wide
           echo "=== Services ==="
           kubectl get svc -n "$AZURE_AKS_NAMESPACE" -o wide
+          echo "=== Deployment describe ==="
+          kubectl describe deploy -n "$AZURE_AKS_NAMESPACE"
+          echo "=== ReplicaSet describe ==="
+          kubectl describe rs -n "$AZURE_AKS_NAMESPACE"
           echo "=== Pod describe ==="
           kubectl describe pods -n "$AZURE_AKS_NAMESPACE"
+          echo "=== Recent events ==="
+          kubectl get events -n "$AZURE_AKS_NAMESPACE" --sort-by=.metadata.creationTimestamp
           echo "=== Recent pod logs ==="
           kubectl logs -n "$AZURE_AKS_NAMESPACE" --all-containers --tail=200 --selector app.kubernetes.io/instance="$HELM_RELEASE_NAME"
