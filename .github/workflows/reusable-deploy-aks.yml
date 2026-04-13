@@ -105,7 +105,7 @@ on:
       docker_platform:
         description: Docker build platform
         required: false
-        default: linux/amd64
+        default: linux/amd64,linux/arm64
         type: string
       helm_chart_path:
         description: Helm chart path (relative to project_directory)
@@ -288,12 +288,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Bootstrap Buildx
+        run: |
+          docker buildx inspect --bootstrap
+
       - name: Build and push Docker image
         shell: bash
         run: |
           set -euo pipefail
           docker buildx build \
             --platform "${{ inputs.docker_platform }}" \
+            --pull \
+            --no-cache \
             -t "$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}" \
             --push \
             .
