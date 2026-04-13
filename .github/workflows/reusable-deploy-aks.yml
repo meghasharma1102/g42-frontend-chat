@@ -310,6 +310,20 @@ jobs:
           resource-group: ${{ env.AZURE_RESOURCE_GROUP }}
           cluster-name: ${{ env.AZURE_AKS_CLUSTER_NAME }}
 
+      - name: Inspect current deployment strategy
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT_DEPLOYMENT="$(kubectl get deploy -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+          if [ -z "$CURRENT_DEPLOYMENT" ]; then
+            echo "No existing deployment found for Helm release '$HELM_RELEASE_NAME' in namespace '$AZURE_AKS_NAMESPACE'."
+            exit 0
+          fi
+
+          echo "Existing deployment: $CURRENT_DEPLOYMENT"
+          kubectl get deployment "$CURRENT_DEPLOYMENT" -n "$AZURE_AKS_NAMESPACE" \
+            -o jsonpath='strategy.type={.spec.strategy.type}{"\n"}strategy.rollingUpdate={.spec.strategy.rollingUpdate}{"\n"}'
+
       - name: Deploy using Helm
         shell: bash
         run: |
@@ -318,6 +332,10 @@ jobs:
             upgrade --install "$HELM_RELEASE_NAME" "${{ inputs.helm_chart_path }}"
             --namespace "$AZURE_AKS_NAMESPACE"
             --create-namespace
+            --atomic
+            --wait
+            --timeout 10m
+            --history-max 5
             --set "image.repository=$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME"
             --set "image.tag=${{ inputs.image_tag }}"
             --set "replicaCount=${{ inputs.replica_count }}"
@@ -385,6 +403,9 @@ jobs:
           set +e
           echo "=== Deployments ==="
           kubectl get deploy -n "$AZURE_AKS_NAMESPACE" -o wide
+          echo "=== Deployment strategies ==="
+          kubectl get deploy -n "$AZURE_AKS_NAMESPACE" \
+            -o jsonpath='{range .items[*]}{.metadata.name}{" strategy.type="}{.spec.strategy.type}{" rollingUpdate="}{.spec.strategy.rollingUpdate}{"\n"}{end}'
           echo "=== Pods ==="
           kubectl get pods -n "$AZURE_AKS_NAMESPACE" -o wide
           echo "=== Services ==="
