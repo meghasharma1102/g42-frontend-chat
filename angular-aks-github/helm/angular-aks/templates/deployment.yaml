@@ -1,8 +1,5 @@
 apiVersion: apps/v1
 kind: Deployment
-{{- $deploymentStrategy := .Values.deploymentStrategy | default dict }}
-{{- $strategyType := get $deploymentStrategy "type" | default "RollingUpdate" }}
-{{- $rollingUpdate := get $deploymentStrategy "rollingUpdate" | default (dict "maxUnavailable" "25%" "maxSurge" "25%") }}
 metadata:
   name: {{ include "angular-aks.fullname" . }}
   labels:
@@ -10,13 +7,7 @@ metadata:
 spec:
   replicas: {{ .Values.replicaCount }}
   strategy:
-    type: {{ $strategyType }}
-    {{- if eq $strategyType "RollingUpdate" }}
-    rollingUpdate:
-      {{- toYaml $rollingUpdate | nindent 6 }}
-    {{- else }}
-    rollingUpdate: null
-    {{- end }}
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "angular-aks.name" . }}
