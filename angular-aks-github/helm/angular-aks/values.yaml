@@ -1,15 +1,9 @@
-replicaCount: 2
-
-deploymentStrategy:
-  type: RollingUpdate
-  rollingUpdate:
-    maxUnavailable: 25%
-    maxSurge: 25%
+replicaCount: 1
 
 image:
   repository: reactapp.azurecr.io/angular-aks-app
-  tag: v1
-  pullPolicy: Always
+  tag: v6
+  pullPolicy: IfNotPresent
 
 service:
   type: LoadBalancer
@@ -39,10 +33,10 @@ ingress:
 
 livenessProbe:
   path: /
-  initialDelaySeconds: 20
-  periodSeconds: 10
+  initialDelaySeconds: 30
+  periodSeconds: 15
 
 readinessProbe:
   path: /
-  initialDelaySeconds: 10
-  periodSeconds: 10
+  initialDelaySeconds: 15
+  periodSeconds: 15
