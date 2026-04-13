@@ -1,13 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
+{{- $deploymentStrategy := .Values.deploymentStrategy | default dict }}
+{{- $strategyType := get $deploymentStrategy "type" | default "RollingUpdate" }}
+{{- $rollingUpdate := get $deploymentStrategy "rollingUpdate" | default (dict "maxUnavailable" 0 "maxSurge" 1) }}
 metadata:
   name: {{ include "angular-aks.fullname" . }}
   labels:
     {{- include "angular-aks.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  progressDeadlineSeconds: {{ .Values.progressDeadlineSeconds }}
+  minReadySeconds: {{ .Values.minReadySeconds }}
   strategy:
-    type: Recreate
+    type: {{ $strategyType }}
+    {{- if eq $strategyType "RollingUpdate" }}
+    rollingUpdate:
+      {{- toYaml $rollingUpdate | nindent 6 }}
+    {{- else }}
+    rollingUpdate: null
+    {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "angular-aks.name" . }}
@@ -18,6 +30,7 @@ spec:
         app.kubernetes.io/name: {{ include "angular-aks.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       containers:
         - name: angular-aks
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -28,6 +41,15 @@ spec:
               protocol: TCP
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.startupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.startupProbe.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+          {{- end }}
           readinessProbe:
             httpGet:
               path: {{ .Values.readinessProbe.path }}

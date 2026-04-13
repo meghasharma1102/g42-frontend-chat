@@ -312,26 +312,91 @@ jobs:
           resource-group: ${{ env.AZURE_RESOURCE_GROUP }}
           cluster-name: ${{ env.AZURE_AKS_CLUSTER_NAME }}
 
-      - name: Delete existing deployment when strategy may conflict
+      - name: Inspect current deployment strategy
         shell: bash
         run: |
-          set +e
-          kubectl delete deployment "$HELM_RELEASE_NAME" -n "$AZURE_AKS_NAMESPACE" --ignore-not-found=true
-          kubectl wait --for=delete deployment/"$HELM_RELEASE_NAME" -n "$AZURE_AKS_NAMESPACE" --timeout=120s || true
+          set -euo pipefail
+          CURRENT_DEPLOYMENT="$(kubectl get deploy -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+          if [ -z "$CURRENT_DEPLOYMENT" ]; then
+            echo "No existing deployment found for Helm release '$HELM_RELEASE_NAME' in namespace '$AZURE_AKS_NAMESPACE'."
+            exit 0
+          fi
+
+          echo "Existing deployment: $CURRENT_DEPLOYMENT"
+          kubectl get deployment "$CURRENT_DEPLOYMENT" -n "$AZURE_AKS_NAMESPACE" \
+            -o jsonpath='strategy.type={.spec.strategy.type}{"\n"}strategy.rollingUpdate={.spec.strategy.rollingUpdate}{"\n"}'
+
+      - name: Prepare single-replica deployment
+        if: ${{ inputs.replica_count == '1' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT_DEPLOYMENT="$(kubectl get deploy -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+          if [ -z "$CURRENT_DEPLOYMENT" ]; then
+            echo "No existing single-replica deployment found to scale down."
+            exit 0
+          fi
+
+          echo "Scaling down existing deployment before recreate-style upgrade: $CURRENT_DEPLOYMENT"
+          kubectl scale deployment "$CURRENT_DEPLOYMENT" -n "$AZURE_AKS_NAMESPACE" --replicas=0
+
+          for _ in $(seq 1 36); do
+            REMAINING_PODS="$(kubectl get pods -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" --no-headers 2>/dev/null | wc -l || true)"
+            if [ "${REMAINING_PODS:-0}" = "0" ]; then
+              echo "Existing pods terminated."
+              break
+            fi
+            echo "Waiting for old pods to terminate. Remaining: $REMAINING_PODS"
+            kubectl get pods -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" -o wide || true
+            sleep 5
+          done
+
+          kubectl get pods -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" -o wide || true
 
       - name: Deploy using Helm
         shell: bash
         run: |
           set -euo pipefail
-          helm upgrade --install "$HELM_RELEASE_NAME" ./helm/angular-aks \
-            --namespace "$AZURE_AKS_NAMESPACE" \
-            --create-namespace \
-            --wait \
-            --timeout 10m \
-            -f ./helm/angular-aks/values-delphi.yaml \
-            --set image.repository="$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME" \
-            --set image.tag="${{ inputs.image_tag }}" \
-            --set replicaCount="${{ inputs.replica_count }}"
+          HELM_ARGS=(
+            upgrade --install "$HELM_RELEASE_NAME" "${{ inputs.helm_chart_path }}"
+            --namespace "$AZURE_AKS_NAMESPACE"
+            --create-namespace
+            --wait
+            --timeout 15m
+            --history-max 5
+            --debug
+            --set "image.repository=$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME"
+            --set "image.tag=${{ inputs.image_tag }}"
+            --set "replicaCount=${{ inputs.replica_count }}"
+          )
+          if [ "${{ inputs.replica_count }}" = "1" ]; then
+            HELM_ARGS+=( --set "deploymentStrategy.type=Recreate" )
+          fi
+          if [ -n "${{ inputs.helm_values_file }}" ]; then
+            HELM_ARGS+=( -f "${{ inputs.helm_values_file }}" )
+          fi
+          if ! helm "${HELM_ARGS[@]}"; then
+            FAILED_DEPLOYMENT="$(kubectl get deploy -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+            echo "=== Helm status ==="
+            helm status "$HELM_RELEASE_NAME" -n "$AZURE_AKS_NAMESPACE" || true
+            echo "=== Deployments ==="
+            kubectl get deploy -n "$AZURE_AKS_NAMESPACE" -o wide || true
+            echo "=== ReplicaSets ==="
+            kubectl get rs -n "$AZURE_AKS_NAMESPACE" -o wide || true
+            echo "=== Pods ==="
+            kubectl get pods -n "$AZURE_AKS_NAMESPACE" -o wide || true
+            echo "=== Deployment describe ==="
+            if [ -n "$FAILED_DEPLOYMENT" ]; then
+              kubectl describe deploy "$FAILED_DEPLOYMENT" -n "$AZURE_AKS_NAMESPACE" || true
+            else
+              kubectl describe deploy -n "$AZURE_AKS_NAMESPACE" || true
+            fi
+            echo "=== ReplicaSet describe ==="
+            kubectl describe rs -n "$AZURE_AKS_NAMESPACE" || true
+            echo "=== Recent events ==="
+            kubectl get events -n "$AZURE_AKS_NAMESPACE" --sort-by=.metadata.creationTimestamp || true
+            exit 1
+          fi
 
       - name: Verify rollout and pod readiness
         shell: bash
@@ -381,7 +446,7 @@ jobs:
           fi
 
           echo "EXTERNAL_ADDR=$EXTERNAL_ADDR"
-          curl -fsS --retry 10 --retry-delay 5 --max-time 15 "http://$EXTERNAL_ADDR${{ inputs.app_smoke_path }}" > /tmp/app-smoke.html || true
+          curl -fsS --retry 10 --retry-delay 5 --max-time 15 "http://$EXTERNAL_ADDR${{ inputs.app_smoke_path }}" > /tmp/app-smoke.html
           grep -qi "<html" /tmp/app-smoke.html || echo "Response received but HTML tag not found; check app response format."
 
       - name: Kubernetes diagnostics (on failure)
@@ -389,16 +454,28 @@ jobs:
         shell: bash
         run: |
           set +e
+          echo "=== Helm history ==="
+          helm history "$HELM_RELEASE_NAME" -n "$AZURE_AKS_NAMESPACE"
+          echo "=== Helm status ==="
+          helm status "$HELM_RELEASE_NAME" -n "$AZURE_AKS_NAMESPACE"
           echo "=== Deployments ==="
           kubectl get deploy -n "$AZURE_AKS_NAMESPACE" -o wide
           echo "=== Deployment strategies ==="
           kubectl get deploy -n "$AZURE_AKS_NAMESPACE" \
             -o jsonpath='{range .items[*]}{.metadata.name}{" strategy.type="}{.spec.strategy.type}{" rollingUpdate="}{.spec.strategy.rollingUpdate}{"\n"}{end}'
+          echo "=== ReplicaSets ==="
+          kubectl get rs -n "$AZURE_AKS_NAMESPACE" -o wide
           echo "=== Pods ==="
           kubectl get pods -n "$AZURE_AKS_NAMESPACE" -o wide
           echo "=== Services ==="
           kubectl get svc -n "$AZURE_AKS_NAMESPACE" -o wide
+          echo "=== Deployment describe ==="
+          kubectl describe deploy -n "$AZURE_AKS_NAMESPACE"
+          echo "=== ReplicaSet describe ==="
+          kubectl describe rs -n "$AZURE_AKS_NAMESPACE"
           echo "=== Pod describe ==="
           kubectl describe pods -n "$AZURE_AKS_NAMESPACE"
+          echo "=== Recent events ==="
+          kubectl get events -n "$AZURE_AKS_NAMESPACE" --sort-by=.metadata.creationTimestamp
           echo "=== Recent pod logs ==="
           kubectl logs -n "$AZURE_AKS_NAMESPACE" --all-containers --tail=200 --selector app.kubernetes.io/instance="$HELM_RELEASE_NAME"
