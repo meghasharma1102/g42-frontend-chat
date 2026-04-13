@@ -2,12 +2,10 @@ name: CI Security and Quality
 
 on:
   workflow_dispatch:
-
-# on:
-#   pull_request:
-#   push:
-#     branches:
-#       - main
+  # pull_request:
+  # push:
+  #   branches:
+  #     - main
 
 permissions:
   contents: read
