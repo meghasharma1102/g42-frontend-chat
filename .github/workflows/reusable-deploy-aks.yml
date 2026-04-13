@@ -351,7 +351,50 @@ jobs:
             sleep 5
           done
 
+          REMAINING_PODS="$(kubectl get pods -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" --no-headers 2>/dev/null | wc -l || true)"
+          if [ "${REMAINING_PODS:-0}" != "0" ]; then
+            echo "Force deleting stuck pods for release '$HELM_RELEASE_NAME'."
+            kubectl delete pod -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" --grace-period=0 --force || true
+            kubectl wait -n "$AZURE_AKS_NAMESPACE" --for=delete pod -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" --timeout=120s || true
+          fi
+
+          FINAL_PODS="$(kubectl get pods -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" --no-headers 2>/dev/null | wc -l || true)"
+          if [ "${FINAL_PODS:-0}" != "0" ]; then
+            echo "::error::Previous release pods are still present after cleanup."
+            kubectl get pods -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" -o wide || true
+            exit 1
+          fi
+
           kubectl get pods -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" -o wide || true
+
+      - name: Helm preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          HELM_LINT_ARGS=(
+            "${{ inputs.helm_chart_path }}"
+            --set "image.repository=$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME"
+            --set "image.tag=${{ inputs.image_tag }}"
+            --set "replicaCount=${{ inputs.replica_count }}"
+          )
+          HELM_RENDER_ARGS=(
+            "$HELM_RELEASE_NAME" "${{ inputs.helm_chart_path }}"
+            --namespace "$AZURE_AKS_NAMESPACE"
+            --set "image.repository=$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME"
+            --set "image.tag=${{ inputs.image_tag }}"
+            --set "replicaCount=${{ inputs.replica_count }}"
+          )
+          if [ "${{ inputs.replica_count }}" = "1" ]; then
+            HELM_LINT_ARGS+=( --set "deploymentStrategy.type=Recreate" )
+            HELM_RENDER_ARGS+=( --set "deploymentStrategy.type=Recreate" )
+          fi
+          if [ -n "${{ inputs.helm_values_file }}" ]; then
+            HELM_LINT_ARGS+=( -f "${{ inputs.helm_values_file }}" )
+            HELM_RENDER_ARGS+=( -f "${{ inputs.helm_values_file }}" )
+          fi
+          helm lint "${HELM_LINT_ARGS[@]}"
+          helm template "${HELM_RENDER_ARGS[@]}" > /tmp/helm-rendered.yaml
+          test -s /tmp/helm-rendered.yaml
 
       - name: Deploy using Helm
         shell: bash
@@ -365,6 +408,7 @@ jobs:
             --timeout 15m
             --history-max 5
             --debug
+            --reset-values
             --set "image.repository=$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME"
             --set "image.tag=${{ inputs.image_tag }}"
             --set "replicaCount=${{ inputs.replica_count }}"
