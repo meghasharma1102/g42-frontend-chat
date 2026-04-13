@@ -6,12 +6,12 @@ on:
       image_tag:
         description: Docker image tag
         required: true
-        default: v5
+        default: v6
         type: string
       replica_count:
         description: Number of pods
         required: true
-        default: '2'
+        default: '1'
         type: string
 
 permissions:
