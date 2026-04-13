@@ -1,5 +1,10 @@
 replicaCount: 1
 
+deploymentStrategy:
+  type: Recreate
+
+terminationGracePeriodSeconds: 5
+
 service:
   type: LoadBalancer
   port: 80

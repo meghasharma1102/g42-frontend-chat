@@ -1,10 +1,14 @@
 replicaCount: 2
+revisionHistoryLimit: 3
+progressDeadlineSeconds: 900
+minReadySeconds: 0
+terminationGracePeriodSeconds: 10
 
 deploymentStrategy:
   type: RollingUpdate
   rollingUpdate:
-    maxUnavailable: 25%
-    maxSurge: 25%
+    maxUnavailable: 0
+    maxSurge: 1
 
 image:
   repository: reactapp.azurecr.io/angular-aks-app
@@ -41,6 +45,13 @@ livenessProbe:
   path: /
   initialDelaySeconds: 20
   periodSeconds: 10
+
+startupProbe:
+  enabled: true
+  path: /
+  initialDelaySeconds: 0
+  periodSeconds: 5
+  failureThreshold: 24
 
 readinessProbe:
   path: /
