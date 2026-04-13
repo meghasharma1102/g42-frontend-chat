@@ -1,5 +1,11 @@
 replicaCount: 2
 
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 25%
+    maxSurge: 25%
+
 image:
   repository: reactapp.azurecr.io/angular-aks-app
   tag: v1
