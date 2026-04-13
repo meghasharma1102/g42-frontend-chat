@@ -1,69 +1,27 @@
 name: CI Security and Quality
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+
+# on:
+#   pull_request:
+#   push:
+#     branches:
+#       - main
 
 permissions:
   contents: read
 
 jobs:
   validate:
-    runs-on: [self-hosted, Linux, X64]
-    defaults:
-      run:
-        working-directory: angular-aks-github
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build Angular app
-        run: npm run build
-
-      - name: Gitleaks scan
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          scan-type: fs
-          scan-ref: ./angular-aks-github
-          format: table
-          exit-code: '0'
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-
-      - name: SonarQube scan
-        uses: SonarSource/sonarqube-scan-action@v7.0.0
-        with:
-          projectBaseDir: angular-aks-github
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
-      - name: SonarQube quality gate
-        uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
-        with:
-          scanMetadataReportFile: angular-aks-github/.scannerwork/report-task.txt
-        timeout-minutes: 10
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+    uses: ./.github/workflows/reusable-ci-security.yml
+    with:
+      project_directory: angular-aks-github
+      node_version: '20'
+      scan_severity: HIGH,CRITICAL
+      enable_sonar: true
+      runner_labels: '["self-hosted","Linux","X64"]'
+    secrets: inherit
 
 
 
