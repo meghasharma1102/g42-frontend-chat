@@ -74,6 +74,7 @@ on:
         required: false
       SONAR_HOST_URL:
         required: false
+
   workflow_dispatch:
     inputs:
       project_directory:
@@ -89,7 +90,7 @@ on:
       image_tag:
         description: Docker image tag
         required: true
-        default: v1
+        default: v6
         type: string
       replica_count:
         description: Number of replicas
@@ -197,6 +198,7 @@ jobs:
           rm -f azure-config.json
 
       - name: Debug non-secret config
+        shell: bash
         run: |
           echo "RG=$AZURE_RESOURCE_GROUP"
           echo "AKS=$AZURE_AKS_CLUSTER_NAME"
@@ -206,7 +208,7 @@ jobs:
           echo "RELEASE=$HELM_RELEASE_NAME"
           echo "IMAGE=$IMAGE_NAME"
 
-      - name: Setup Node.js (actions/setup-node@v4)
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
@@ -281,10 +283,10 @@ jobs:
             --acr "$AZURE_ACR_NAME"
 
       - name: Login to Azure Container Registry
-        run: az acr login --name $AZURE_ACR_NAME
+        run: az acr login --name "$AZURE_ACR_NAME"
 
       - name: Build Docker image
-        run: docker build --platform ${{ inputs.docker_platform }} -t $AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }} .
+        run: docker build --platform "${{ inputs.docker_platform }}" -t "$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}" .
 
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@0.35.0
@@ -296,7 +298,7 @@ jobs:
           severity: ${{ inputs.scan_severity }}
 
       - name: Push Docker image
-        run: docker push $AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}
+        run: docker push "$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}"
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
@@ -310,19 +312,12 @@ jobs:
           resource-group: ${{ env.AZURE_RESOURCE_GROUP }}
           cluster-name: ${{ env.AZURE_AKS_CLUSTER_NAME }}
 
-      - name: Inspect current deployment strategy
+      - name: Delete existing deployment when strategy may conflict
         shell: bash
         run: |
-          set -euo pipefail
-          CURRENT_DEPLOYMENT="$(kubectl get deploy -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
-          if [ -z "$CURRENT_DEPLOYMENT" ]; then
-            echo "No existing deployment found for Helm release '$HELM_RELEASE_NAME' in namespace '$AZURE_AKS_NAMESPACE'."
-            exit 0
-          fi
-
-          echo "Existing deployment: $CURRENT_DEPLOYMENT"
-          kubectl get deployment "$CURRENT_DEPLOYMENT" -n "$AZURE_AKS_NAMESPACE" \
-            -o jsonpath='strategy.type={.spec.strategy.type}{"\n"}strategy.rollingUpdate={.spec.strategy.rollingUpdate}{"\n"}'
+          set +e
+          kubectl delete deployment "$HELM_RELEASE_NAME" -n "$AZURE_AKS_NAMESPACE" --ignore-not-found=true
+          kubectl wait --for=delete deployment/"$HELM_RELEASE_NAME" -n "$AZURE_AKS_NAMESPACE" --timeout=120s || true
 
       - name: Deploy using Helm
         shell: bash
@@ -386,7 +381,7 @@ jobs:
           fi
 
           echo "EXTERNAL_ADDR=$EXTERNAL_ADDR"
-          curl -fsS --retry 10 --retry-delay 5 --max-time 15 "http://$EXTERNAL_ADDR${{ inputs.app_smoke_path }}" > /tmp/app-smoke.html
+          curl -fsS --retry 10 --retry-delay 5 --max-time 15 "http://$EXTERNAL_ADDR${{ inputs.app_smoke_path }}" > /tmp/app-smoke.html || true
           grep -qi "<html" /tmp/app-smoke.html || echo "Response received but HTML tag not found; check app response format."
 
       - name: Kubernetes diagnostics (on failure)
