@@ -1,8 +1,8 @@
-replicaCount: 1
+replicaCount: 2
 
 image:
   repository: reactapp.azurecr.io/angular-aks-app
-  tag: v7
+  tag: v1
   pullPolicy: Always
 
 service:

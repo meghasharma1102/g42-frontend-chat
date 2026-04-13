@@ -1,0 +1,395 @@
+name: Reusable Deploy to AKS
+
+on:
+  workflow_call:
+    inputs:
+      project_directory:
+        description: Project directory from repository root
+        required: false
+        default: .
+        type: string
+      environment_name:
+        description: GitHub environment name
+        required: false
+        default: dev
+        type: string
+      image_tag:
+        description: Docker image tag
+        required: true
+        type: string
+      replica_count:
+        description: Number of replicas
+        required: false
+        default: '1'
+        type: string
+      node_version:
+        description: Node.js version
+        required: false
+        default: '20'
+        type: string
+      docker_platform:
+        description: Docker build platform
+        required: false
+        default: linux/amd64
+        type: string
+      helm_chart_path:
+        description: Helm chart path (relative to project_directory)
+        required: false
+        default: ./helm/angular-aks
+        type: string
+      helm_values_file:
+        description: Optional Helm values file path (relative to project_directory)
+        required: false
+        default: ./helm/angular-aks/values-delphi.yaml
+        type: string
+      app_smoke_path:
+        description: HTTP path used for load balancer smoke test
+        required: false
+        default: /
+        type: string
+      lb_poll_attempts:
+        description: Number of polling attempts for external load balancer address
+        required: false
+        default: 30
+        type: number
+      scan_severity:
+        description: Trivy severity levels
+        required: false
+        default: HIGH,CRITICAL
+        type: string
+      enable_sonar:
+        description: Run SonarQube scan and quality gate
+        required: false
+        default: true
+        type: boolean
+      runner_labels:
+        description: JSON array for runner labels
+        required: false
+        default: '["self-hosted","Linux","X64"]'
+        type: string
+    secrets:
+      AZURE_CREDENTIALS:
+        required: true
+      SONAR_TOKEN:
+        required: false
+      SONAR_HOST_URL:
+        required: false
+  workflow_dispatch:
+    inputs:
+      project_directory:
+        description: Project directory from repository root
+        required: false
+        default: .
+        type: string
+      environment_name:
+        description: GitHub environment name
+        required: false
+        default: dev
+        type: string
+      image_tag:
+        description: Docker image tag
+        required: true
+        default: v1
+        type: string
+      replica_count:
+        description: Number of replicas
+        required: false
+        default: '1'
+        type: string
+      node_version:
+        description: Node.js version
+        required: false
+        default: '20'
+        type: string
+      docker_platform:
+        description: Docker build platform
+        required: false
+        default: linux/amd64
+        type: string
+      helm_chart_path:
+        description: Helm chart path (relative to project_directory)
+        required: false
+        default: ./helm/angular-aks
+        type: string
+      helm_values_file:
+        description: Optional Helm values file path (relative to project_directory)
+        required: false
+        default: ./helm/angular-aks/values-delphi.yaml
+        type: string
+      app_smoke_path:
+        description: HTTP path used for load balancer smoke test
+        required: false
+        default: /
+        type: string
+      lb_poll_attempts:
+        description: Number of polling attempts for external load balancer address
+        required: false
+        default: 30
+        type: number
+      scan_severity:
+        description: Trivy severity levels
+        required: false
+        default: HIGH,CRITICAL
+        type: string
+      enable_sonar:
+        description: Run SonarQube scan and quality gate
+        required: false
+        default: true
+        type: boolean
+      runner_labels:
+        description: JSON array for runner labels
+        required: false
+        default: '["self-hosted","Linux","X64"]'
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-scan-deploy:
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    environment: ${{ inputs.environment_name }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.project_directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read config from AZURE_CREDENTIALS
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '${{ secrets.AZURE_CREDENTIALS }}' > azure-config.json
+          required_keys=(
+            clientId
+            tenantId
+            subscriptionId
+            resourceGroup
+            aksClusterName
+            aksNamespace
+            acrName
+            acrLoginServer
+            helmReleaseName
+            imageName
+          )
+          for key in "${required_keys[@]}"; do
+            value="$(jq -r ".${key} // empty" azure-config.json)"
+            if [ -z "${value}" ]; then
+              echo "::error::Missing '${key}' in AZURE_CREDENTIALS secret JSON."
+              exit 1
+            fi
+          done
+          echo "AZURE_CLIENT_ID=$(jq -r '.clientId' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_TENANT_ID=$(jq -r '.tenantId' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_SUBSCRIPTION_ID=$(jq -r '.subscriptionId' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_RESOURCE_GROUP=$(jq -r '.resourceGroup' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_AKS_CLUSTER_NAME=$(jq -r '.aksClusterName' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_AKS_NAMESPACE=$(jq -r '.aksNamespace' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_ACR_NAME=$(jq -r '.acrName' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_ACR_LOGIN_SERVER=$(jq -r '.acrLoginServer' azure-config.json)" >> $GITHUB_ENV
+          echo "HELM_RELEASE_NAME=$(jq -r '.helmReleaseName' azure-config.json)" >> $GITHUB_ENV
+          echo "IMAGE_NAME=$(jq -r '.imageName' azure-config.json)" >> $GITHUB_ENV
+          rm -f azure-config.json
+
+      - name: Debug non-secret config
+        run: |
+          echo "RG=$AZURE_RESOURCE_GROUP"
+          echo "AKS=$AZURE_AKS_CLUSTER_NAME"
+          echo "NS=$AZURE_AKS_NAMESPACE"
+          echo "ACR=$AZURE_ACR_NAME"
+          echo "ACR_LOGIN=$AZURE_ACR_LOGIN_SERVER"
+          echo "RELEASE=$HELM_RELEASE_NAME"
+          echo "IMAGE=$IMAGE_NAME"
+
+      - name: Setup Node.js (actions/setup-node@v4)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Angular app
+        run: npm run build
+
+      - name: Gitleaks scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scan-ref: ${{ inputs.project_directory }}
+          format: table
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: ${{ inputs.scan_severity }}
+
+      - name: Validate SonarQube settings
+        if: ${{ inputs.enable_sonar }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.SONAR_TOKEN }}" ] || [ -z "${{ secrets.SONAR_HOST_URL }}" ]; then
+            echo "::error::SONAR_TOKEN and SONAR_HOST_URL are required when enable_sonar=true."
+            exit 1
+          fi
+
+      - name: SonarQube scan
+        if: ${{ inputs.enable_sonar }}
+        uses: SonarSource/sonarqube-scan-action@v7.0.0
+        with:
+          projectBaseDir: ${{ inputs.project_directory }}
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: SonarQube quality gate
+        if: ${{ inputs.enable_sonar }}
+        uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
+        with:
+          scanMetadataReportFile: ${{ inputs.project_directory }}/.scannerwork/report-task.txt
+        timeout-minutes: 10
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: Azure login using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify Azure account
+        run: az account show
+
+      - name: Validate AKS-ACR role assignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          az aks check-acr \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_AKS_CLUSTER_NAME" \
+            --acr "$AZURE_ACR_NAME"
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name $AZURE_ACR_NAME
+
+      - name: Build Docker image
+        run: docker build --platform ${{ inputs.docker_platform }} -t $AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }} .
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ${{ env.AZURE_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+          format: table
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: ${{ inputs.scan_severity }}
+
+      - name: Push Docker image
+        run: docker push $AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ env.AZURE_RESOURCE_GROUP }}
+          cluster-name: ${{ env.AZURE_AKS_CLUSTER_NAME }}
+
+      - name: Deploy using Helm
+        shell: bash
+        run: |
+          set -euo pipefail
+          HELM_ARGS=(
+            upgrade --install "$HELM_RELEASE_NAME" "${{ inputs.helm_chart_path }}"
+            --namespace "$AZURE_AKS_NAMESPACE"
+            --create-namespace
+            --set "image.repository=$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME"
+            --set "image.tag=${{ inputs.image_tag }}"
+            --set "replicaCount=${{ inputs.replica_count }}"
+          )
+          if [ -n "${{ inputs.helm_values_file }}" ]; then
+            HELM_ARGS+=( -f "${{ inputs.helm_values_file }}" )
+          fi
+          helm "${HELM_ARGS[@]}"
+
+      - name: Verify rollout and pod readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOYMENT_NAME="$(kubectl get deploy -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" -o jsonpath='{.items[0].metadata.name}')"
+          if [ -z "$DEPLOYMENT_NAME" ]; then
+            echo "::error::No deployment found for Helm release '$HELM_RELEASE_NAME' in namespace '$AZURE_AKS_NAMESPACE'."
+            kubectl get deploy -n "$AZURE_AKS_NAMESPACE"
+            exit 1
+          fi
+          echo "Deployment: $DEPLOYMENT_NAME"
+          kubectl rollout status deployment/"$DEPLOYMENT_NAME" -n "$AZURE_AKS_NAMESPACE" --timeout=300s
+          kubectl wait -n "$AZURE_AKS_NAMESPACE" --for=condition=ready pod -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" --timeout=300s
+          kubectl get pods -n "$AZURE_AKS_NAMESPACE" -o wide
+
+      - name: Verify load balancer and app endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_NAME="$(kubectl get svc -n "$AZURE_AKS_NAMESPACE" -l app.kubernetes.io/instance="$HELM_RELEASE_NAME" -o jsonpath='{.items[0].metadata.name}')"
+          if [ -z "$SERVICE_NAME" ]; then
+            echo "::error::No service found for Helm release '$HELM_RELEASE_NAME' in namespace '$AZURE_AKS_NAMESPACE'."
+            kubectl get svc -n "$AZURE_AKS_NAMESPACE"
+            exit 1
+          fi
+          echo "Service: $SERVICE_NAME"
+          kubectl get svc "$SERVICE_NAME" -n "$AZURE_AKS_NAMESPACE" -o wide
+
+          EXTERNAL_ADDR=""
+          for _ in $(seq 1 ${{ inputs.lb_poll_attempts }}); do
+            EXTERNAL_ADDR="$(kubectl get svc "$SERVICE_NAME" -n "$AZURE_AKS_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+            if [ -z "$EXTERNAL_ADDR" ]; then
+              EXTERNAL_ADDR="$(kubectl get svc "$SERVICE_NAME" -n "$AZURE_AKS_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
+            fi
+            if [ -n "$EXTERNAL_ADDR" ]; then
+              break
+            fi
+            echo "Waiting for external load balancer address..."
+            sleep 10
+          done
+
+          if [ -z "$EXTERNAL_ADDR" ]; then
+            echo "::error::LoadBalancer external address not assigned within timeout."
+            kubectl get svc "$SERVICE_NAME" -n "$AZURE_AKS_NAMESPACE" -o yaml
+            exit 1
+          fi
+
+          echo "EXTERNAL_ADDR=$EXTERNAL_ADDR"
+          curl -fsS --retry 10 --retry-delay 5 --max-time 15 "http://$EXTERNAL_ADDR${{ inputs.app_smoke_path }}" > /tmp/app-smoke.html
+          grep -qi "<html" /tmp/app-smoke.html || echo "Response received but HTML tag not found; check app response format."
+
+      - name: Kubernetes diagnostics (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          echo "=== Deployments ==="
+          kubectl get deploy -n "$AZURE_AKS_NAMESPACE" -o wide
+          echo "=== Pods ==="
+          kubectl get pods -n "$AZURE_AKS_NAMESPACE" -o wide
+          echo "=== Services ==="
+          kubectl get svc -n "$AZURE_AKS_NAMESPACE" -o wide
+          echo "=== Pod describe ==="
+          kubectl describe pods -n "$AZURE_AKS_NAMESPACE"
+          echo "=== Recent pod logs ==="
+          kubectl logs -n "$AZURE_AKS_NAMESPACE" --all-containers --tail=200 --selector app.kubernetes.io/instance="$HELM_RELEASE_NAME"

@@ -1,0 +1,133 @@
+name: Reusable CI Security and Quality
+
+on:
+  workflow_call:
+    inputs:
+      project_directory:
+        description: Project directory from repository root
+        required: false
+        default: .
+        type: string
+      node_version:
+        description: Node.js version
+        required: false
+        default: '20'
+        type: string
+      scan_severity:
+        description: Trivy severity levels
+        required: false
+        default: HIGH,CRITICAL
+        type: string
+      enable_sonar:
+        description: Run SonarQube scan and quality gate
+        required: false
+        default: true
+        type: boolean
+      runner_labels:
+        description: JSON array for runner labels
+        required: false
+        default: '["self-hosted","Linux","X64"]'
+        type: string
+    secrets:
+      SONAR_TOKEN:
+        required: false
+      SONAR_HOST_URL:
+        required: false
+  workflow_dispatch:
+    inputs:
+      project_directory:
+        description: Project directory from repository root
+        required: false
+        default: .
+        type: string
+      node_version:
+        description: Node.js version
+        required: false
+        default: '20'
+        type: string
+      scan_severity:
+        description: Trivy severity levels
+        required: false
+        default: HIGH,CRITICAL
+        type: string
+      enable_sonar:
+        description: Run SonarQube scan and quality gate
+        required: false
+        default: true
+        type: boolean
+      runner_labels:
+        description: JSON array for runner labels
+        required: false
+        default: '["self-hosted","Linux","X64"]'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.project_directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js (actions/setup-node@v4)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build application
+        run: npm run build
+
+      - name: Gitleaks scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scan-ref: ${{ inputs.project_directory }}
+          format: table
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: ${{ inputs.scan_severity }}
+
+      - name: Validate SonarQube settings
+        if: ${{ inputs.enable_sonar }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.SONAR_TOKEN }}" ] || [ -z "${{ secrets.SONAR_HOST_URL }}" ]; then
+            echo "::error::SONAR_TOKEN and SONAR_HOST_URL are required when enable_sonar=true."
+            exit 1
+          fi
+
+      - name: SonarQube scan
+        if: ${{ inputs.enable_sonar }}
+        uses: SonarSource/sonarqube-scan-action@v7.0.0
+        with:
+          projectBaseDir: ${{ inputs.project_directory }}
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: SonarQube quality gate
+        if: ${{ inputs.enable_sonar }}
+        uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
+        with:
+          scanMetadataReportFile: ${{ inputs.project_directory }}/.scannerwork/report-task.txt
+        timeout-minutes: 10
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
