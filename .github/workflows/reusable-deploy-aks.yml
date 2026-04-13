@@ -90,7 +90,7 @@ on:
       image_tag:
         description: Docker image tag
         required: true
-        default: v6
+        default: v11
         type: string
       replica_count:
         description: Number of replicas
@@ -285,8 +285,18 @@ jobs:
       - name: Login to Azure Container Registry
         run: az acr login --name "$AZURE_ACR_NAME"
 
-      - name: Build Docker image
-        run: docker build --platform "${{ inputs.docker_platform }}" -t "$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}" .
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform "${{ inputs.docker_platform }}" \
+            -t "$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}" \
+            --push \
+            .
 
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@0.35.0
@@ -296,9 +306,6 @@ jobs:
           exit-code: '0'
           ignore-unfixed: true
           severity: ${{ inputs.scan_severity }}
-
-      - name: Push Docker image
-        run: docker push "$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}"
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
