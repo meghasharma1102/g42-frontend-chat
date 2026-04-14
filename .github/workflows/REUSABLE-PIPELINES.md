@@ -89,5 +89,5 @@ jobs:
 
 ## Required secrets for deploy workflow
 
-- `AZURE_CREDENTIALS` (JSON with `clientId`, `tenantId`, `subscriptionId`, `resourceGroup`, `aksClusterName`, `aksNamespace`, `acrName`, `acrLoginServer`, `helmReleaseName`, `imageName`)
+- `AZURE_CREDENTIALS` (JSON with `clientId`, `tenantId`, `subscriptionId`, `resourceGroup`, `aksClusterName`, `aksNamespace`, `acrName`, `helmReleaseName`, `imageName`; `acrLoginServer` is optional and validated against the actual ACR)
 - `SONAR_TOKEN` and `SONAR_HOST_URL` only when `enable_sonar: true`

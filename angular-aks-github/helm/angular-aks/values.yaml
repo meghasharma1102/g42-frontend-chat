@@ -11,8 +11,8 @@ deploymentStrategy:
     maxSurge: 1
 
 image:
-  repository: reactapp.azurecr.io/angular-aks-app
-  tag: v6
+  repository: ""
+  tag: ""
   pullPolicy: Always
 
 service:

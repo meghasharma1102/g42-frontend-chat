@@ -174,7 +174,6 @@ jobs:
             aksClusterName
             aksNamespace
             acrName
-            acrLoginServer
             helmReleaseName
             imageName
           )
@@ -192,7 +191,7 @@ jobs:
           echo "AZURE_AKS_CLUSTER_NAME=$(jq -r '.aksClusterName' azure-config.json)" >> $GITHUB_ENV
           echo "AZURE_AKS_NAMESPACE=$(jq -r '.aksNamespace' azure-config.json)" >> $GITHUB_ENV
           echo "AZURE_ACR_NAME=$(jq -r '.acrName' azure-config.json)" >> $GITHUB_ENV
-          echo "AZURE_ACR_LOGIN_SERVER=$(jq -r '.acrLoginServer' azure-config.json)" >> $GITHUB_ENV
+          echo "AZURE_ACR_LOGIN_SERVER_INPUT=$(jq -r '.acrLoginServer // empty' azure-config.json)" >> $GITHUB_ENV
           echo "HELM_RELEASE_NAME=$(jq -r '.helmReleaseName' azure-config.json)" >> $GITHUB_ENV
           echo "IMAGE_NAME=$(jq -r '.imageName' azure-config.json)" >> $GITHUB_ENV
           rm -f azure-config.json
@@ -204,7 +203,7 @@ jobs:
           echo "AKS=$AZURE_AKS_CLUSTER_NAME"
           echo "NS=$AZURE_AKS_NAMESPACE"
           echo "ACR=$AZURE_ACR_NAME"
-          echo "ACR_LOGIN=$AZURE_ACR_LOGIN_SERVER"
+          echo "ACR_LOGIN_INPUT=${AZURE_ACR_LOGIN_SERVER_INPUT:-<not-set>}"
           echo "RELEASE=$HELM_RELEASE_NAME"
           echo "IMAGE=$IMAGE_NAME"
 
@@ -273,6 +272,21 @@ jobs:
       - name: Verify Azure account
         run: az account show
 
+      - name: Resolve Azure Container Registry login server
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL_ACR_LOGIN_SERVER="$(az acr show --name "$AZURE_ACR_NAME" --query loginServer -o tsv)"
+          if [ -z "$ACTUAL_ACR_LOGIN_SERVER" ]; then
+            echo "::error::Unable to resolve login server for ACR '$AZURE_ACR_NAME'."
+            exit 1
+          fi
+          if [ -n "${AZURE_ACR_LOGIN_SERVER_INPUT:-}" ] && [ "$AZURE_ACR_LOGIN_SERVER_INPUT" != "$ACTUAL_ACR_LOGIN_SERVER" ]; then
+            echo "::warning::AZURE_CREDENTIALS.acrLoginServer ('$AZURE_ACR_LOGIN_SERVER_INPUT') does not match ACR '$AZURE_ACR_NAME' login server '$ACTUAL_ACR_LOGIN_SERVER'. Using the resolved ACR login server."
+          fi
+          echo "AZURE_ACR_LOGIN_SERVER=$ACTUAL_ACR_LOGIN_SERVER" >> $GITHUB_ENV
+          echo "Resolved ACR login server: $ACTUAL_ACR_LOGIN_SERVER"
+
       - name: Validate AKS-ACR role assignment
         shell: bash
         run: |
@@ -296,13 +310,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          IMAGE_REFERENCE="$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}"
+          echo "Building and pushing image: $IMAGE_REFERENCE"
           docker buildx build \
             --platform "${{ inputs.docker_platform }}" \
             --pull \
             --no-cache \
-            -t "$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}" \
+            -t "$IMAGE_REFERENCE" \
             --push \
             .
+
+      - name: Verify image tag exists in ACR
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE_REFERENCE="$AZURE_ACR_LOGIN_SERVER/$IMAGE_NAME:${{ inputs.image_tag }}"
+          az acr repository show \
+            --name "$AZURE_ACR_NAME" \
+            --image "$IMAGE_NAME:${{ inputs.image_tag }}" \
+            >/dev/null
+          echo "Verified image in ACR: $IMAGE_REFERENCE"
 
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@0.35.0

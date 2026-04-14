@@ -233,18 +233,26 @@ Create these secrets:
 
 | Secret | Description |
 |---|---|
-| `AZURE_CREDENTIALS` | JSON used by `azure/login` |
+| `AZURE_CREDENTIALS` | JSON consumed by the deploy workflow for Azure and AKS settings |
 
 Example value for `AZURE_CREDENTIALS`:
 
 ```json
 {
   "clientId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "clientSecret": "xxxxxxxxxxxxxxxx",
+  "tenantId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "subscriptionId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "tenantId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  "resourceGroup": "rg-delphi-aks-demo",
+  "aksClusterName": "aks-delphi-demo",
+  "aksNamespace": "angular-delphi",
+  "acrName": "acrdelphiaksdemo001",
+  "acrLoginServer": "acrdelphiaksdemo001.azurecr.io",
+  "helmReleaseName": "angular-delphi",
+  "imageName": "angular-aks-app"
 }
 ```
+
+`acrLoginServer` is optional in the deploy workflow. When present, the workflow validates it against the real login server returned by Azure and uses the Azure-resolved value.
 
 ### 7.3 Secrets for OIDC mode
 
@@ -510,4 +518,3 @@ Your first goal should be only this:
 - App opens through the AKS public IP
 
 Once that works, harden it later.
-

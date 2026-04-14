@@ -3,6 +3,8 @@ kind: Deployment
 {{- $deploymentStrategy := .Values.deploymentStrategy | default dict }}
 {{- $strategyType := get $deploymentStrategy "type" | default "RollingUpdate" }}
 {{- $rollingUpdate := get $deploymentStrategy "rollingUpdate" | default (dict "maxUnavailable" 0 "maxSurge" 1) }}
+{{- $imageRepository := required "image.repository is required. Pass it with Helm or set it in values.yaml." .Values.image.repository }}
+{{- $imageTag := required "image.tag is required. Pass it with Helm or set it in values.yaml." .Values.image.tag }}
 metadata:
   name: {{ include "angular-aks.fullname" . }}
   labels:
@@ -33,7 +35,7 @@ spec:
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       containers:
         - name: angular-aks
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ $imageRepository }}:{{ $imageTag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
