@@ -105,7 +105,7 @@ on:
       docker_platform:
         description: Docker build platform
         required: false
-        default: linux/amd64,linux/arm64
+        default: linux/amd64
         type: string
       helm_chart_path:
         description: Helm chart path (relative to project_directory)

@@ -15,6 +15,12 @@ image:
   tag: ""
   pullPolicy: Always
 
+# imagePullSecrets: []
+# Uncomment and set if AKS nodes do not have AcrPull role on the ACR.
+# Example:
+#   - name: acr-pull-secret
+imagePullSecrets: []
+
 service:
   type: LoadBalancer
   port: 80
